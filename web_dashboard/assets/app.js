@@ -210,6 +210,27 @@ function bindPlanet() {
       toast(`已切換成「${button.dataset.planetMode}」展示資料`);
     });
   });
+
+  const viewButtons = $$("[data-view]");
+  const solarView = $(".view-solar-system");
+  const cityView = $(".view-city");
+  const hudDesc = $("#hudDesc");
+  viewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      viewButtons.forEach((b) => b.classList.remove("active"));
+      button.classList.add("active");
+      const view = button.dataset.view;
+      if (view === 'solar-system') {
+        if (solarView) solarView.style.display = 'block';
+        if (cityView) cityView.style.display = 'none';
+        if (hudDesc) hudDesc.textContent = "任務完成會即時點亮星星與軌道";
+      } else {
+        if (solarView) solarView.style.display = 'none';
+        if (cityView) cityView.style.display = 'block';
+        if (hudDesc) hudDesc.textContent = "任務完成會即時點亮城市區域";
+      }
+    });
+  });
 }
 
 function saveDemoState(key, payload) {
@@ -582,16 +603,222 @@ function bindPresentation() {
   });
 }
 
+function injectAINavigator() {
+  const container = document.createElement("div");
+  container.className = "ai-navigator";
+  container.innerHTML = `
+    <div class="ai-chat-panel" id="aiChatPanel">
+      <div class="ai-chat-header">
+        <div class="ai-header-title">艦載 AI 導航助手</div>
+        <div>
+          <button class="ai-close-btn" id="aiSettingsBtn" title="設定API Key" style="margin-right: 8px;">⚙️</button>
+          <button class="ai-close-btn" id="aiCloseBtn">✕</button>
+        </div>
+      </div>
+      
+      <div class="ai-settings-panel" id="aiSettingsPanel" style="display: none; padding: 16px; background: rgba(0, 240, 255, 0.05); border-bottom: 1px solid rgba(0, 240, 255, 0.2);">
+        <label style="color: #00f0ff; font-size: 12px; display: block; margin-bottom: 8px;">設定 Gemini API Key</label>
+        <input type="password" id="aiApiKeyInput" placeholder="輸入 API Key..." style="width: 100%; background: rgba(3, 5, 10, 0.6); border: 1px solid rgba(0, 240, 255, 0.3); border-radius: 6px; padding: 6px 10px; color: #fff; outline: none; margin-bottom: 8px; box-sizing: border-box;" />
+        <button id="aiSaveKeyBtn" style="background: #00f0ff; color: #03050a; border: none; border-radius: 6px; padding: 4px 12px; font-weight: 700; cursor: pointer; font-size: 12px;">儲存</button>
+      </div>
+
+      <div class="ai-chat-body" id="aiChatBody">
+        <div class="ai-msg">您好！艦長。請在上方齒輪設定您的 Gemini API Key，即可與真實星艦主機連線。</div>
+      </div>
+      <div class="ai-chat-input">
+        <input type="text" placeholder="輸入指令..." id="aiInput" />
+        <button id="aiSend">發送</button>
+      </div>
+    </div>
+    <div class="ai-orb" id="aiOrb">
+      <div class="ai-orb-core"></div>
+    </div>
+  `;
+  document.body.appendChild(container);
+
+  const orb = $("#aiOrb", container);
+  const panel = $("#aiChatPanel", container);
+  const closeBtn = $("#aiCloseBtn", container);
+  const settingsBtn = $("#aiSettingsBtn", container);
+  const settingsPanel = $("#aiSettingsPanel", container);
+  const apiKeyInput = $("#aiApiKeyInput", container);
+  const saveKeyBtn = $("#aiSaveKeyBtn", container);
+  const input = $("#aiInput", container);
+  const send = $("#aiSend", container);
+  const body = $("#aiChatBody", container);
+
+  const savedKey = localStorage.getItem("gemini_api_key");
+  if (savedKey) apiKeyInput.value = savedKey;
+
+  settingsBtn.addEventListener("click", () => {
+    settingsPanel.style.display = settingsPanel.style.display === "none" ? "block" : "none";
+  });
+
+  saveKeyBtn.addEventListener("click", () => {
+    localStorage.setItem("gemini_api_key", apiKeyInput.value.trim());
+    settingsPanel.style.display = "none";
+    body.innerHTML += `<div class="ai-msg">API 金鑰已儲存。系統已重新啟動。</div>`;
+    body.scrollTop = body.scrollHeight;
+  });
+
+  orb.addEventListener("click", () => {
+    panel.classList.toggle("open");
+  });
+
+  closeBtn.addEventListener("click", () => {
+    panel.classList.remove("open");
+  });
+
+  const sendMsg = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    
+    const apiKey = localStorage.getItem("gemini_api_key");
+    if (!apiKey) {
+      body.innerHTML += `<div class="ai-msg">警告：尚未偵測到核心金鑰。請點擊上方齒輪圖示輸入 Gemini API Key。</div>`;
+      body.scrollTop = body.scrollHeight;
+      return;
+    }
+
+    body.innerHTML += `<div class="ai-msg user">${text}</div>`;
+    input.value = "";
+    body.scrollTop = body.scrollHeight;
+    
+    const loadingId = "msg-" + Date.now();
+    body.innerHTML += `<div class="ai-msg" id="${loadingId}">[ 系統讀取中... 與中樞神經連線中 ]</div>`;
+    body.scrollTop = body.scrollHeight;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: "你是一個名為 Nudge 的科幻太空船艦載 AI 助手，負責協助艦長（使用者）進行時間管理與自律任務。你的語氣要像科幻電影中的 AI（冷靜、聰明、帶點科技感），稱呼使用者為艦長。回答要簡潔有力，不要給出落落長的文章。\n如果使用者要求開始專注、倒數計時，請加上：[ACTION:START_FOCUS:分鐘數]\n如果使用者要求新增任務，請加上：[ACTION:ADD_TASK:任務名稱]\n如果使用者要求前往某個頁面(例如總覽、家長中心、營運後台等)，請加上：[ACTION:NAVIGATE:該頁面網址.html] (頁面包含: index.html, personal.html, guardian.html, groups.html, operations.html, planet.html)。\n如果使用者要求導覽或問系統怎麼用，請直接以文字簡單回覆介紹：左側是導航面板，中間是數據儀表板，下方是專屬星球，每天完成任務可以發射衛星環繞星球。" }]
+          },
+          contents: [{ parts: [{ text: text }] }]
+        })
+      });
+
+      const loadingMsg = document.getElementById(loadingId);
+      if (!response.ok) {
+        throw new Error("API 請求失敗：" + response.status);
+      }
+
+      const data = await response.json();
+      let reply = data.candidates[0].content.parts[0].text;
+      
+      const focusMatch = reply.match(/\[ACTION:START_FOCUS:(\d+)\]/);
+      if (focusMatch) {
+        reply = reply.replace(focusMatch[0], '');
+        setTimeout(() => {
+          window.location.href = `personal-focus.html?start=true&focus=${focusMatch[1]}`;
+        }, 1500);
+      }
+
+      const taskMatch = reply.match(/\[ACTION:ADD_TASK:(.+)\]/);
+      if (taskMatch) {
+        reply = reply.replace(taskMatch[0], '');
+        const tasks = JSON.parse(localStorage.getItem('nudge_tasks') || '[]');
+        tasks.push(taskMatch[1].trim());
+        localStorage.setItem('nudge_tasks', JSON.stringify(tasks));
+        if (window.bindMissions) {
+          window.bindMissions(); // re-render if on planet page
+        }
+      }
+
+      const navMatch = reply.match(/\[ACTION:NAVIGATE:([a-zA-Z0-9_-]+\.html)\]/);
+      if (navMatch) {
+        reply = reply.replace(navMatch[0], '');
+        setTimeout(() => {
+          window.location.href = navMatch[1];
+        }, 1500);
+      }
+
+
+      
+      if (loadingMsg) {
+        loadingMsg.innerHTML = reply.trim().replace(/\n/g, '<br/>');
+        loadingMsg.removeAttribute('id');
+      }
+    } catch (error) {
+      const loadingMsg = document.getElementById(loadingId);
+      if (loadingMsg) {
+        loadingMsg.innerHTML = `連線錯誤：${error.message}。請確認您的 API 金鑰是否正確。`;
+        loadingMsg.style.color = '#ff3333';
+        loadingMsg.removeAttribute('id');
+      }
+    }
+    body.scrollTop = body.scrollHeight;
+  };
+
+  send.addEventListener("click", sendMsg);
+  input.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") sendMsg();
+  });
+}
+
+window.bindMissions = function() {
+  const list = document.getElementById("dynamicMissionList");
+  if (!list) return; // Not on planet page
+  
+  const tasks = JSON.parse(localStorage.getItem('nudge_tasks') || '["專注 2 小時", "完成作業 A", "早睡 (12:00前)"]');
+  // Initialize default if empty in localStorage just for the first time
+  if (!localStorage.getItem('nudge_tasks')) {
+    localStorage.setItem('nudge_tasks', JSON.stringify(tasks));
+  }
+
+  list.innerHTML = "";
+  tasks.slice(0, 5).forEach((task, index) => {
+    const sId = "s" + (index + 1);
+    list.innerHTML += `
+      <li>
+        <label>
+          <input type="checkbox" class="mission-check" data-satellite="${sId}" />
+          <span>${task}</span>
+        </label>
+      </li>
+    `;
+  });
+
+  const checks = $$(".mission-check");
+  checks.forEach(check => {
+    check.addEventListener("change", (e) => {
+      const satClass = e.target.dataset.satellite;
+      if (!satClass) return;
+      const sat = $("." + satClass);
+      const hlClass = satClass.replace("s", "hl");
+      const houseLight = $("." + hlClass);
+      
+      if (e.target.checked) {
+        if (sat) {
+          sat.classList.add("active");
+        }
+        if (houseLight) {
+          houseLight.classList.add("active");
+        }
+      } else {
+        if (sat) sat.classList.remove("active");
+        if (houseLight) houseLight.classList.remove("active");
+      }
+    });
+  });
+};
+
 window.addEventListener("DOMContentLoaded", () => {
-  injectModuleMenu();
-  injectDisplayModeControls();
-  animateCounters();
-  bootCharts();
-  bindDemoButtons();
-  bindPlanet();
-  bindExtensionTools();
-  bindTilt();
-  bindPresentation();
+  try { injectModuleMenu(); } catch(e){}
+  try { injectDisplayModeControls(); } catch(e){}
+  try { injectAINavigator(); } catch(e){}
+  try { animateCounters(); } catch(e){}
+  try { bootCharts(); } catch(e){}
+  try { bindDemoButtons(); } catch(e){}
+  try { bindPlanet(); } catch(e){}
+  try { bindExtensionTools(); } catch(e){}
+  try { bindTilt(); } catch(e){}
+  try { bindPresentation(); } catch(e){}
+  try { if (window.bindMissions) window.bindMissions(); } catch(e){}
 });
 
 window.addEventListener("resize", bootCharts);
+
+
